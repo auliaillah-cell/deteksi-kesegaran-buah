@@ -1,0 +1,36 @@
+# Konfigurasi data object detection YOLO. Lengkapi label bbox pada labels/{train,val,test}.
+path: dataset_yolo
+train: images/train
+val: images/val
+test: images/test
+names:
+  0: almond
+  1: apple
+  2: apricot
+  3: avocado
+  4: banana
+  5: blackberry
+  6: blueberry
+  7: cantaloupe
+  8: cherry
+  9: clementine
+  10: coconut
+  11: date
+  12: fig
+  13: grape
+  14: kiwi_fruit
+  15: lemon
+  16: lime
+  17: mandarin_orange
+  18: melon
+  19: orange
+  20: papaya
+  21: peach
+  22: pear
+  23: persimmon
+  24: pineapple
+  25: prune
+  26: raspberry
+  27: strawberry
+  28: tomato
+  29: watermelon
