@@ -8,7 +8,21 @@ Daftar pada `src/deteksi_buah.py` berisi **30 entri**, walaupun permintaan menye
 dataset/<fruit_id>/{segar,kurang_segar,busuk}/
 ```
 
-Gambar lama seperti `dataset/pisang1.png` dan folder `dataset/segar`/`dataset/busuk` di root dipertahankan, tetapi **tidak dimasukkan otomatis** karena belum ada metadata yang memastikan buah dan kesegarannya.
+Dataset kesegaran FruQ-DB berada di `dataset/segar/`, `dataset/kurang_segar/`, dan `dataset/busuk/` di root dataset. Label sumber Fresh/Mild/Rotten dipetakan ke tiga folder tersebut. Foto-foto ini bercampur jenis buah dan tidak memiliki label jenis per gambar; sumber serta lisensi CC BY 4.0 dicatat di [dataset/FruQ-DB_SOURCE.md](dataset/FruQ-DB_SOURCE.md). Gambar lama seperti `dataset/pisang1.png` tetap tidak digunakan otomatis karena labelnya tidak diketahui.
+
+## Deteksi kesegaran per buah
+
+**Batas penting:** FruQ-DB tidak mencatat jenis buah per foto. Jadi data itu tidak bisa membuktikan bahwa pisang atau buah tertentu busuk; model hanya belajar kondisi umum dari campuran foto buah. Folder `dataset/<fruit_id>/belum_berlabel_kesegaran/` juga tidak dipakai sebagai data segar karena foto Fruits-360 hanya berlabel jenis buah. Untuk model kesegaran per jenis, tambahkan foto tiap buah ke folder kondisi yang benar setelah diperiksa manusia, atau gunakan dataset berlisensi yang memang memberi kedua label (jenis dan kondisi).
+
+Pelatihan menyeimbangkan sampel tiap kelas dan memisahkan validasi secara terstratifikasi. Probabilitas prediksi juga diratakan sedikit supaya model yang belum dikalibrasi tidak melaporkan keyakinan 100%. Bercak cokelat pada kulit pisang sendiri belum membuktikan buah busuk; kematangan dan pembusukan perlu dibedakan lewat contoh berlabel yang sesuai.
+
+`uji_deteksi.py` mendeteksi jenis buah, memotong tiap kotak deteksi, lalu mengklasifikasikan potongan itu sebagai `segar`, `kurang_segar`, atau `busuk`. Hasil GUI ditampilkan sebagai daftar satu baris per buah. Indeks kesegaran 0–100 dihitung sebagai ekspektasi probabilitas kelas dengan nilai busuk=0, kurang segar=50, dan segar=100. Probabilitasnya diratakan sedikit karena keyakinan mentah model belum dikalibrasi; angka itu tetap estimasi, bukan pengukuran fisik kualitas buah. Bobot CNN ada di `model/kesegaran_buah.pt`; latih ulang dari dataset di atas dengan:
+
+```powershell
+.venv\Scripts\python.exe scripts\train_freshness.py
+```
+
+Classifier dilatih pada foto FruQ-DB yang sudah dipetakan. Validasi yang dicetak skrip memakai pemisahan acak per gambar, bukan pemisahan per video/sesi, sehingga skor validasi dapat lebih tinggi daripada kinerja pada foto baru.
 
 ## Mengambil foto jenis buah
 
@@ -70,4 +84,12 @@ Setiap gambar memerlukan berkas label `.txt` yang berisi satu baris per objek: `
 
 ## Batasan dataset yang tersedia
 
-Saat pipeline disiapkan, project hanya memiliki direktori `dataset/segar` dan `dataset/busuk` yang kosong serta satu `dataset/pisang1.png` tanpa label yang dapat diverifikasi. Karena itu tidak ada angka laporan awal yang dapat dianggap berlabel benar dan belum ada dataset segar/kurang segar/busuk yang dapat dipakai latih. Sumber publik, lisensi, penandaan kesegaran, dan anotasi bbox harus dikurasi sebelum training.
+FruQ-DB memberi label kondisi kesegaran, tetapi label jenis buah per gambar dan kotak anotasi tidak tersedia. Karena itu dataset tersebut melatih classifier kondisi saja; detektor jenis buah tetap memakai model objek terpisah dan tidak dilatih ulang dari gambar FruQ-DB.
+
+## Kandidat dataset buah cacat/berbintik
+
+Dataset yang paling sesuai untuk menambahkan label kualitas terpisah dari `busuk` adalah [Banana and Guava dataset for machine learning and deep learning-based quality classification](https://data.mendeley.com/datasets/56td5w4wz2/2), oleh Abiban Kumari dan Jaswinder Singh (2024), lisensi CC BY 4.0. Dataset menyediakan 1.738 foto asli: pisang (Class A 509, Class B 281, Defect 403) dan jambu biji (Class A 161, Class B 179, Defect 205). Labelnya berdasarkan perubahan fisiologis dan tingkat kualitas; kategori `Defect` bukan anotasi area bercak satu per satu, dan bukan jaminan bahwa semua bercak ringan dibedakan dari busuk. Lihat [artikel dan deskripsi anotasi](https://pmc.ncbi.nlm.nih.gov/articles/PMC11547028/) sebelum pemetaan label.
+
+Untuk apel dan mangga, [Healthy-Defective-Fruits](https://github.com/luischuquim/Healthy-Defective-Fruits) melaporkan masing-masing 5.000 gambar segar dan 5.000 gambar cacat (campuran gambar nyata dan sintetis). Namun halaman repositori metadata Mendeley menyatakan file dataset tidak tersedia, jadi periksa akses dan izin file sebelum mengimpor.
+
+Rekomendasi pemetaan: pertahankan label `segar`, `kurang_segar`, dan `busuk` dari sumber yang memang mendefinisikan kondisi tersebut; tambahkan `bercacat` hanya untuk foto yang sumbernya secara eksplisit memberi label defect. Jangan mengubah semua foto berbercak menjadi `busuk`, dan jangan menganggap label Defect dari banana/guava sebagai label yang berlaku untuk seluruh jenis buah.

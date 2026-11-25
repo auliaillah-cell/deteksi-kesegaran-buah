@@ -1,13 +1,16 @@
 import queue
 import threading
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 import cv2
+import numpy as np  # BARU
 
 from src.deteksi_buah import deteksi_buah
 
 # ====== Palet Golden Dark ======
+# Warna-warna ini dipakai bersama agar tampilan seluruh aplikasi konsisten.
 BG = "#0B0905"
 KARTU = "#17130B"
 PANEL = "#0F0C07"
@@ -20,11 +23,13 @@ TEKS_REDUP = "#A89868"
 
 
 def _rgb(hex_warna):
+    # Ubah warna format #RRGGBB menjadi komponen merah, hijau, dan biru.
     hex_warna = hex_warna.lstrip("#")
     return tuple(int(hex_warna[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def _campur(c1, c2, t):
+    # Campur dua warna dengan proporsi t untuk membuat gradasi tombol.
     a, b = _rgb(c1), _rgb(c2)
     return "#%02x%02x%02x" % tuple(
         int(a[i] + (b[i] - a[i]) * t) for i in range(3)
@@ -84,6 +89,7 @@ class Tombol3D(tk.Canvas):
     config = configure
 
     def _gambar(self):
+        # Gambar ulang tombol sesuai status aktif, hover, dan sedang ditekan.
         self.delete("all")
         w, h, t = self._lebar, self._tinggi, self.TEBAL
         bh = h - t
@@ -135,6 +141,7 @@ class Tombol3D(tk.Canvas):
 
 class AplikasiDeteksiBuah:
     def __init__(self, root):
+        # Siapkan jendela, status aplikasi, lalu susun komponen antarmuka.
         self.root = root
         self.root.title("FruitVision | Deteksi Buah")
         self.root.geometry("1100x760")
@@ -144,6 +151,9 @@ class AplikasiDeteksiBuah:
         self.lokasi_foto = None
         self.foto_tampil = None
         self._gambar_asli = None
+        self._gambar_hasil_deteksi = None
+        self._gambar_sumber = None  # BARU
+        self._info_citra = None  # BARU
         self._hasil_deteksi = queue.Queue()
         self.root.after(100, self._periksa_hasil_deteksi)
 
@@ -243,7 +253,9 @@ class AplikasiDeteksiBuah:
             font=("Segoe UI", 10),
             bg=KARTU,
             fg=TEKS,
-            anchor="w"
+            anchor="w",
+            justify="left",
+            wraplength=270
         )
         self.label_ringkasan.pack(fill="x", padx=16, pady=(0, 10))
 
@@ -284,6 +296,176 @@ class AplikasiDeteksiBuah:
         self.daftar_hasil.tag_configure(
             "kosong", foreground=TEKS_REDUP
         )
+        self.tombol_download = Tombol3D(
+            kartu_hasil, "Download Hasil Deteksi", self.download_hasil_deteksi,
+            atas="#F7D774", bawah="#C9961A", sisi="#7A5A0B", fg="#1A1304",
+            lebar=240, tinggi=44, bg=KARTU
+        )
+        self.tombol_download.pack(anchor="e", padx=16, pady=(0, 14))
+        self.tombol_download.config(state=tk.DISABLED)
+        self.tombol_download.bind(
+            "<ButtonRelease-1>",
+            self._beri_pesan_jika_hasil_belum_tersedia,
+            add="+"
+        )
+
+        # BARU: panel nilai citra berada di bawah kedua kartu.
+        bungkus_nilai, kartu_nilai = self._kartu_3d(konten)
+        bungkus_nilai.configure(height=210)
+        bungkus_nilai.pack_propagate(False)
+        bungkus_nilai.pack(fill="x", pady=(12, 0))
+        tk.Label(
+            kartu_nilai,
+            text="NILAI CITRA",
+            font=("Segoe UI", 9, "bold"),
+            bg=KARTU,
+            fg=EMAS
+        ).pack(anchor="w", padx=16, pady=(10, 6))
+        nilai_frame = tk.Frame(kartu_nilai, bg=KARTU)
+        nilai_frame.pack(
+            fill="both", expand=True, padx=(16, 10), pady=(0, 10)
+        )
+        scrollbar_nilai = tk.Scrollbar(
+            nilai_frame, orient="vertical",
+            bg="#2A2110", troughcolor=PANEL, activebackground=EMAS,
+            relief="raised", bd=1
+        )
+        scrollbar_nilai.pack(side="right", fill="y")
+        self.panel_nilai_citra = tk.Text(
+            nilai_frame,
+            height=6,
+            wrap="word",
+            state="disabled",
+            font=("Consolas", 9),
+            bg=PANEL,
+            fg=TEKS,
+            relief="sunken",
+            bd=3,
+            padx=10,
+            pady=8,
+            yscrollcommand=scrollbar_nilai.set,
+            cursor="arrow",
+            highlightthickness=0
+        )
+        self.panel_nilai_citra.pack(side="left", fill="both", expand=True)
+        scrollbar_nilai.config(command=self.panel_nilai_citra.yview)
+        self._isi_panel_nilai_citra(
+            "Pilih foto, lalu tekan Deteksi Buah untuk menampilkan nilainya."
+        )
+
+    def _isi_panel_nilai_citra(self, teks):  # BARU
+        self.panel_nilai_citra.config(state="normal")  # BARU
+        self.panel_nilai_citra.delete("1.0", tk.END)  # BARU
+        self.panel_nilai_citra.insert(tk.END, teks)  # BARU
+        self.panel_nilai_citra.config(state="disabled")  # BARU
+        self.panel_nilai_citra.yview_moveto(0)  # BARU
+
+    @staticmethod
+    def _statistik_rgb_hsv(gambar_rgb):  # BARU
+        # Hitung ringkasan warna RGB dan HSV untuk seluruh gambar atau area buah.
+        piksel_rgb = np.asarray(gambar_rgb.convert("RGB"), dtype=np.uint8)  # BARU
+        piksel_hsv = cv2.cvtColor(piksel_rgb, cv2.COLOR_RGB2HSV)  # BARU
+        hsv_mean = piksel_hsv.mean(axis=(0, 1))  # BARU
+        hsv_min = piksel_hsv.min(axis=(0, 1)).astype(np.float64)  # BARU
+        hsv_max = piksel_hsv.max(axis=(0, 1)).astype(np.float64)  # BARU
+        hsv_std = piksel_hsv.std(axis=(0, 1))  # BARU
+        jumlah_hue = np.bincount(  # BARU: hitung hue rata-rata secara melingkar.
+            piksel_hsv[..., 0].ravel(), minlength=180
+        )
+        sudut_h = np.deg2rad(np.arange(180) * 2.0)  # BARU
+        hue_rata = np.degrees(np.arctan2(  # BARU
+            (np.sin(sudut_h) * jumlah_hue).sum(),
+            (np.cos(sudut_h) * jumlah_hue).sum()
+        )) % 360.0
+        hsv_mean[0] = hue_rata  # BARU: H dalam derajat (0-360).
+        hsv_min[0] *= 2.0  # BARU
+        hsv_max[0] *= 2.0  # BARU
+        hsv_std[0] *= 2.0  # BARU
+        hsv_mean[1:] *= 100.0 / 255.0  # BARU: S dan V dalam persen.
+        hsv_min[1:] *= 100.0 / 255.0  # BARU
+        hsv_max[1:] *= 100.0 / 255.0  # BARU
+        hsv_std[1:] *= 100.0 / 255.0  # BARU
+        return {  # BARU
+            "rgb_mean": piksel_rgb.mean(axis=(0, 1)),  # BARU
+            "rgb_min": piksel_rgb.min(axis=(0, 1)),  # BARU
+            "rgb_max": piksel_rgb.max(axis=(0, 1)),  # BARU
+            "rgb_std": piksel_rgb.std(axis=(0, 1)),  # BARU
+            "hsv_mean": hsv_mean,  # BARU
+            "hsv_min": hsv_min,  # BARU
+            "hsv_max": hsv_max,  # BARU
+            "hsv_std": hsv_std  # BARU
+        }  # BARU
+
+    def _tampilkan_nilai_citra(self, gambar_rgb, daftar_buah):  # BARU
+        # Susun statistik gambar dan setiap kotak deteksi untuk panel nilai citra.
+        try:  # BARU
+            statistik = self._statistik_rgb_hsv(gambar_rgb)  # BARU
+            lebar, tinggi = gambar_rgb.size  # BARU
+            mode = (self._info_citra or (lebar, tinggi, gambar_rgb.mode))[2]  # BARU
+            nama_rgb = ("R", "G", "B")  # BARU
+            nama_hsv = ("H", "S", "V")  # BARU
+            baris = [  # BARU
+                "INFO CITRA",
+                f"Ukuran        : {lebar} x {tinggi} piksel",
+                f"Jumlah piksel : {lebar * tinggi:,}".replace(",", "."),
+                f"Mode warna    : {mode}",
+                "",
+                "RATA-RATA SELURUH GAMBAR (RGB 0-255; HSV H derajat, S/V persen)",
+                "RGB           : " + "  ".join(
+                    f"{nama}={nilai:.2f}"
+                    for nama, nilai in zip(nama_rgb, statistik["rgb_mean"])
+                ),
+                "HSV           : " + "  ".join(
+                    f"{nama}={nilai:.2f}{' deg' if nama == 'H' else '%'}"
+                    for nama, nilai in zip(nama_hsv, statistik["hsv_mean"])
+                ),
+                "",
+                "MIN / MAX / STANDAR DEVIASI PER SALURAN",
+            ]  # BARU
+            for ruang, nama, satuan in (  # BARU
+                ("RGB", nama_rgb, ""),
+                ("HSV", nama_hsv, " deg"),
+            ):
+                min_key = f"{ruang.lower()}_min"  # BARU
+                max_key = f"{ruang.lower()}_max"  # BARU
+                std_key = f"{ruang.lower()}_std"  # BARU
+                for indeks, saluran in enumerate(nama):  # BARU
+                    unit = satuan if saluran == "H" else ("%" if ruang == "HSV" else "")  # BARU
+                    baris.append(  # BARU
+                        f"{ruang} {saluran}: min={statistik[min_key][indeks]:.2f}{unit}, "
+                        f"max={statistik[max_key][indeks]:.2f}{unit}, "
+                        f"std={statistik[std_key][indeks]:.2f}{unit}"
+                    )  # BARU
+            baris.extend(("", "NILAI PER BUAH (AREA KOTAK DETEKSI)"))  # BARU
+            for nomor, buah in enumerate(daftar_buah, start=1):  # BARU
+                x1, y1, x2, y2 = map(int, buah["koordinat"])  # BARU
+                x1 = max(0, min(lebar, x1))  # BARU
+                x2 = max(0, min(lebar, x2))  # BARU
+                y1 = max(0, min(tinggi, y1))  # BARU
+                y2 = max(0, min(tinggi, y2))  # BARU
+                baris.append(f"{nomor}. {buah['nama']}")  # BARU
+                if x2 <= x1 or y2 <= y1:  # BARU
+                    baris.append("   Area kotak tidak valid; statistik tidak tersedia.")  # BARU
+                    continue  # BARU
+                area = gambar_rgb.crop((x1, y1, x2, y2))  # BARU
+                statistik_area = self._statistik_rgb_hsv(area)  # BARU
+                baris.append(  # BARU
+                    "   RGB: " + "  ".join(
+                        f"{nama}={nilai:.2f}"
+                        for nama, nilai in zip(nama_rgb, statistik_area["rgb_mean"])
+                    )
+                )  # BARU
+                baris.append(  # BARU
+                    "   HSV: " + "  ".join(
+                        f"{nama}={nilai:.2f}{' deg' if nama == 'H' else '%'}"
+                        for nama, nilai in zip(nama_hsv, statistik_area["hsv_mean"])
+                    )
+                )  # BARU
+            self._isi_panel_nilai_citra("\n".join(baris))  # BARU
+        except Exception as error:  # BARU
+            self._isi_panel_nilai_citra(  # BARU
+                f"Nilai citra gagal dihitung: {error}"
+            )  # BARU
 
     def _kartu_3d(self, parent, kedalaman=8):
         """Kartu timbul: bayangan bergeser + kilau emas di tepi atas."""
@@ -305,6 +487,7 @@ class AplikasiDeteksiBuah:
         return bungkus, kartu
 
     def pilih_foto(self):
+        # Minta pengguna memilih gambar, simpan salinannya, lalu tampilkan pratinjau.
         lokasi = filedialog.askopenfilename(
             title="Pilih Foto Buah",
             filetypes=[
@@ -316,14 +499,22 @@ class AplikasiDeteksiBuah:
         if not lokasi:
             return
 
+        self._gambar_hasil_deteksi = None
+        self.tombol_download.config(state=tk.DISABLED)
+
         # Simpan lokasi foto yang dipilih
         self.lokasi_foto = lokasi
 
         # Tampilkan foto sebelum deteksi
         try:
             with Image.open(lokasi) as foto:
-                self._gambar_asli = foto.convert("RGB")
+                self._info_citra = (foto.width, foto.height, foto.mode)  # BARU
+                self._gambar_sumber = foto.convert("RGB")  # BARU
+                self._gambar_asli = self._gambar_sumber.copy()
             self._perbarui_pratinjau()
+            self._isi_panel_nilai_citra(  # BARU
+                "Foto diperbarui. Nilai citra akan muncul setelah deteksi selesai."
+            )
             self.label_ringkasan.config(
                 text="Foto siap dianalisis"
             )
@@ -337,8 +528,13 @@ class AplikasiDeteksiBuah:
             )
             self.lokasi_foto = None
             self._gambar_asli = None
+            self._gambar_hasil_deteksi = None
+            self._gambar_sumber = None  # BARU
+            self._info_citra = None  # BARU
+            self._isi_panel_nilai_citra("Pilih foto yang dapat dibuka.")  # BARU
 
     def proses_deteksi(self):
+        # Validasi pilihan foto dan jalankan deteksi di thread agar UI tetap responsif.
         if not self.lokasi_foto:
             messagebox.showwarning(
                 "Foto Belum Dipilih",
@@ -346,6 +542,8 @@ class AplikasiDeteksiBuah:
             )
             return
 
+        self._gambar_hasil_deteksi = None
+        self.tombol_download.config(state=tk.DISABLED)
         self.tombol_pilih_foto.config(state=tk.DISABLED)
         self.tombol_deteksi.config(state=tk.DISABLED)
         self.label_ringkasan.config(
@@ -356,6 +554,7 @@ class AplikasiDeteksiBuah:
         self._isi_daftar_hasil(
             "Pertama kali, model sekitar 50 MB diunduh satu kali."
         )
+        self._isi_panel_nilai_citra("Deteksi berjalan; nilai citra akan dihitung...")  # BARU
         threading.Thread(
             target=self._jalankan_deteksi,
             args=(self.lokasi_foto,),
@@ -363,6 +562,7 @@ class AplikasiDeteksiBuah:
         ).start()
 
     def _jalankan_deteksi(self, lokasi_foto):
+        # Jalankan model di thread latar dan kirim hasilnya melalui antrean.
         try:
             hasil = deteksi_buah(lokasi_foto)
         except Exception as error:
@@ -371,6 +571,7 @@ class AplikasiDeteksiBuah:
             self._hasil_deteksi.put(("sukses", hasil))
 
     def _periksa_hasil_deteksi(self):
+        # Ambil hasil thread secara berkala dan perbarui komponen UI di thread utama.
         try:
             status, hasil = self._hasil_deteksi.get_nowait()
         except queue.Empty:
@@ -380,7 +581,12 @@ class AplikasiDeteksiBuah:
             self.tombol_deteksi.config(state=tk.NORMAL)
 
             if status == "error":
+                self._gambar_hasil_deteksi = None
+                self.tombol_download.config(state=tk.DISABLED)
                 self.label_ringkasan.config(text="Deteksi gagal")
+                self._isi_panel_nilai_citra(  # BARU
+                    "Nilai citra belum tersedia karena deteksi gagal."
+                )
                 messagebox.showerror("Deteksi Gagal", str(hasil))
             else:
                 try:
@@ -391,44 +597,111 @@ class AplikasiDeteksiBuah:
             self.root.after(100, self._periksa_hasil_deteksi)
 
     def _tampilkan_hasil_deteksi(self, gambar, daftar_buah):
-        ringkasan = {}
-        for buah in daftar_buah:
-            data = ringkasan.setdefault(
-                buah["nama"], {"jumlah": 0, "keyakinan": []}
-            )
-            data["jumlah"] += 1
-            data["keyakinan"].append(buah["keyakinan_deteksi"])
-
-        jumlah_jenis = len(ringkasan)
-        jumlah_buah = len(daftar_buah)
-        self.label_ringkasan.config(
-            text=f"{jumlah_buah} buah  •  {jumlah_jenis} jenis"
+        # Tampilkan gambar beranotasi, ringkasan kondisi, dan nilai warna citra.
+        gambar_sumber = (  # BARU: statistik memakai foto asli tanpa anotasi.
+            self._gambar_sumber.copy()
+            if self._gambar_sumber is not None else None
         )
-        self._gambar_asli = Image.fromarray(
+        jumlah_buah = len(daftar_buah)
+        jumlah_kesegaran = {
+            kelas: sum(buah["kesegaran"] == kelas for buah in daftar_buah)
+            for kelas in ("segar", "kurang_segar", "busuk")
+        }
+        self.label_ringkasan.config(
+            text=(
+                f"{jumlah_buah} buah  •  Segar {jumlah_kesegaran['segar']}  "
+                f"•  Kurang segar {jumlah_kesegaran['kurang_segar']}  "
+                f"•  Busuk {jumlah_kesegaran['busuk']}"
+            )
+        )
+        self._gambar_hasil_deteksi = Image.fromarray(
             cv2.cvtColor(gambar, cv2.COLOR_BGR2RGB)
         )
+        self._gambar_asli = self._gambar_hasil_deteksi.copy()
         self._perbarui_pratinjau()
+        if gambar_sumber is not None:  # BARU
+            self._tampilkan_nilai_citra(gambar_sumber, daftar_buah)  # BARU
 
-        if not ringkasan:
+        if not daftar_buah:
             self._isi_daftar_hasil("Buah Tidak Terdeteksi.")
+        else:
+            baris = ["DAFTAR BUAH (SETIAP BUAH DINILAI TERPISAH)", ""]
+            for nomor, buah in enumerate(daftar_buah, start=1):
+                baris.append(
+                    f"{nomor}. {buah['nama']} — {buah['kesegaran'].replace('_', ' ').title()}"
+                )
+                baris.append(
+                    f"   Indeks kesegaran {buah['indeks_kesegaran']:.0f}%  •  "
+                    f"Keyakinan kondisi {buah['keyakinan_kesegaran']:.0%}"
+                )
+                baris.append("")
+
+            self._isi_daftar_hasil("\n".join(baris).rstrip(), heading=True)
+
+        self.tombol_download.config(state=tk.NORMAL)
+
+    def _beri_pesan_jika_hasil_belum_tersedia(self, _event=None):
+        if self._gambar_hasil_deteksi is None:
+            self.tombol_download._set(tekan=False)
+            self._tampilkan_pesan_hasil_belum_tersedia()
+
+    @staticmethod
+    def _tampilkan_pesan_hasil_belum_tersedia():
+        messagebox.showinfo(
+            "Hasil Belum Tersedia",
+            "Gambar hasil deteksi belum tersedia untuk diunduh."
+        )
+
+    def download_hasil_deteksi(self):
+        # Simpan gambar hasil deteksi dengan format PNG atau JPEG yang didukung.
+        if self._gambar_hasil_deteksi is None:
+            self._tampilkan_pesan_hasil_belum_tersedia()
             return
 
-        baris = [
-            f"{'JENIS':<17} {'QTY':>3}  {'CONF':>4}",
-            "-" * 28
-        ]
-        urutan = sorted(
-            ringkasan.items(),
-            key=lambda item: (-item[1]["jumlah"], item[0].lower())
+        lokasi = filedialog.asksaveasfilename(
+            title="Simpan Hasil Deteksi",
+            initialfile="FruitVision_Hasil_Deteksi.png",
+            defaultextension=".png",
+            filetypes=[
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg")
+            ]
         )
-        for nama, data in urutan:
-            jumlah = data["jumlah"]
-            keyakinan_tertinggi = max(data["keyakinan"])
-            baris.append(
-                f"{nama[:17]:<17} {jumlah:>3}  {keyakinan_tertinggi:>3.0%}"
-            )
+        if not lokasi:
+            return
 
-        self._isi_daftar_hasil("\n".join(baris), heading=True)
+        path = Path(lokasi)
+        if not path.suffix:
+            path = path.with_suffix(".png")
+        ekstensi = path.suffix.lower()
+        if ekstensi not in {".png", ".jpg", ".jpeg"}:
+            messagebox.showerror(
+                "Format Tidak Didukung",
+                "Simpan gambar dengan format PNG atau JPG."
+            )
+            return
+
+        try:
+            if ekstensi in {".jpg", ".jpeg"}:
+                self._gambar_hasil_deteksi.convert("RGB").save(
+                    path,
+                    format="JPEG",
+                    quality=95,
+                    subsampling=0,
+                    optimize=True
+                )
+            else:
+                self._gambar_hasil_deteksi.save(path, format="PNG")
+        except Exception as error:
+            messagebox.showerror(
+                "Gagal Menyimpan",
+                f"Gambar hasil deteksi tidak dapat disimpan:\n{error}"
+            )
+        else:
+            messagebox.showinfo(
+                "Berhasil Disimpan",
+                f"Gambar hasil deteksi disimpan di:\n{path}"
+            )
 
     def _isi_daftar_hasil(self, teks, heading=False):
         self.daftar_hasil.config(state="normal")
@@ -443,6 +716,7 @@ class AplikasiDeteksiBuah:
         self.daftar_hasil.yview_moveto(0)
 
     def _perbarui_pratinjau(self, _event=None):
+        # Sesuaikan ukuran pratinjau dengan ruang label tanpa mengubah rasio gambar.
         if self._gambar_asli is None:
             return
 
@@ -458,6 +732,7 @@ class AplikasiDeteksiBuah:
 
 
 if __name__ == "__main__":
+    # Titik masuk aplikasi saat file dijalankan secara langsung.
     root = tk.Tk()
     aplikasi = AplikasiDeteksiBuah(root)
     root.mainloop()
